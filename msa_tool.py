@@ -1,20 +1,29 @@
 """
 IMAGE-Land MSA tool v1.0 - Geanderson Ambrósio - ambrosiog@pbl.nl
 
-The IMAGE-Land MSA tool calculates the index Mean Species Abundance, for plants and warm-blooded vertebrates, based on outputs from IMAGE-Land model. 
-The tool is based on GLOBIO 4 MSA implementation, which is more detailed at the grid level, but takes more time to run.
-The IMAGE-Land MSA tool has good agreement with GLOBIO MSA (see validation folder), especially for plants.
+The IMAGE-Land MSA tool calculates the index Mean Species Abundance, for plants (uses 3 out of 3 pressures) and warm-blooded vertebrates (uses 2 out of 5 pressures), based on outputs from IMAGE model.
+The tool is based on GLOBIO 4 MSA implementation, which is more detailed at the grid level, but takes more time to run.  
+Even though the code calculate MSA for vertebrates, it  only account for two pressures while the original MSA vertebrates from GLOBIO accounts for five pressures.
+We validated results for plants and vertebrates and agreed that the MSA tool is a good estimator for MSA plants, but not for MSA vertebrates.
+Please do not use the MSA tool to calculate MSA for vertebrates.
+
 The file parameters.ini controls the main settings for this tool, like scenarios and years for which you want the tool to run.
 One specific settings is still defined in this source code: see file_list in the function compute_share.
-
-Some other improvements for version 1.0 are: 
-This version has classes to deal with paths and parameters.
-Classess implementation was necessary to make it easier to debug the calculation of regional values in the notebook(.ipynb).
-Current version has:
-    Solved plantation shares. Now plantation from GFRAC and plantation from GLCT-GFORMAN are part of the land_use_type Plantation
-    Solved CC pressure. Now CC pressure is forced to zero when options.dat says there is no CC effects (clfbopt == 0)  
-    Solved calculation of regional values. Now grids receive 0 where it was NAs before. NAs were biasing up the regional values.
 """
+from pathlib import Path
+import pandas as pd
+import json
+import pym
+import xarray as xr
+import tqdm
+import numpy as np
+import matplotlib.pyplot as plt
+import dask
+import os.path
+import os
+import configparser
+import datetime
+import shutil
 import functools
 import time
 import traceback as tb
@@ -26,20 +35,6 @@ print("Importing packages")
 """
 Importing required libraries
 """
-import shutil
-import datetime
-import configparser
-import os
-import os.path
-import dask
-import matplotlib.pyplot as plt
-import numpy as np
-import tqdm
-import xarray as xr
-import pym
-import json
-import pandas as pd
-from pathlib import Path
 
 AREA_REGION_INPUT = os.path.join("input", "")
 
@@ -55,7 +50,8 @@ class DataPath:
         project_name = os.path.basename(os.path.dirname(input))
 
         self._scenario_input = os.path.join(input, "netcdf", "")
-        self._output = os.path.join("msa_tool_output", project_name, scen_name, "")
+        self._output = os.path.join(
+            "msa_tool_output", project_name, scen_name, "")
         self._area_region_input = AREA_REGION_INPUT
         self._gbuiltup_path = None
 
@@ -103,7 +99,8 @@ class Parameters:
             int(year) for year in config["MSA_TOOL"]["years"][1:-1].split(",")
         ]
         self._make_figures = config.getboolean("MSA_TOOL", "make_figures")
-        self._force_compute_files = config.getboolean("MSA_TOOL", "force_compute_files")
+        self._force_compute_files = config.getboolean(
+            "MSA_TOOL", "force_compute_files")
         self._clear_cache = config.getboolean("MSA_TOOL", "clear_cache")
         self._species_names = [
             s.title().lstrip()
@@ -193,7 +190,8 @@ def load_dataset(file_list: list, data_path, **kwargs_sel):
             dataset = dataset.assign_coords(latitude=ref_dataset.latitude.data)
         if "longitude" in dataset.coords:
             # print("Longitude of dataset are not the same as GREG.NC, replacing it")
-            dataset = dataset.assign_coords(longitude=ref_dataset.longitude.data)
+            dataset = dataset.assign_coords(
+                longitude=ref_dataset.longitude.data)
         return dataset.transpose(*sorted(dataset.dims))
 
     with dask.config.set(**{"array.slicing.split_large_chunks": False}):
@@ -246,7 +244,7 @@ def compute_share(data_path, parameters):
 
     file_list = [
         f"{data_path.scenario_input}GLCT.NC",
-        f"{data_path.gbuiltup_path}",  ### WARNING ####
+        f"{data_path.gbuiltup_path}",  # WARNING ####
         ### GBUILTUP.NC is not available in Biodiv_Post2020 runs. ###
         ### For Biodiv_Post2020, set area_region_input instead of scenario_input, and you will use a GBUILTUP file for SSP2 which is in the folder input. ###
         f"{data_path.scenario_input}GFERTILIZER.NC",
@@ -377,7 +375,8 @@ def compute_share(data_path, parameters):
     ### Bioenergy Crop ###
     ### Share of all bioenergy cropland to be later divided between intense and minimal ###
     # Loop to get the sum of GFRAC related to bioenergy cropland share
-    NGFBFC_list = [i for i in range(msa_dataset.NGFBFC.size) if i in [17, 18, 19, 21]]
+    NGFBFC_list = [i for i in range(msa_dataset.NGFBFC.size) if i in [
+        17, 18, 19, 21]]
     msa_dataset["non_urban_crop_share_bioenergy"] = (
         msa_dataset["GFRAC"].isel(NGFBFC=NGFBFC_list).fillna(0.0).sum("NGFBFC")
     )
@@ -435,7 +434,8 @@ def compute_share(data_path, parameters):
         )
     # Plantation (area GFRAC)
     msa_dataset["plantation_area_gfrac"] = (
-        msa_dataset["non_urban_area"] * msa_dataset["non_urban_plantation_share"]
+        msa_dataset["non_urban_area"] *
+        msa_dataset["non_urban_plantation_share"]
     ).where(msa_dataset["non_urban_plantation_share"] > 0.0)
 
     msa_dataset["non_urban_plantation_share_bioenergy"] = xr.zeros_like(
@@ -462,7 +462,8 @@ def compute_share(data_path, parameters):
     msa_dataset["share"][dict(land_use_type=i)] = (
         xr.where(  # Part 1 (from GLCT and GFRAC)
             np.logical_and(
-                np.logical_or(msa_dataset["GLCT"] == 4, msa_dataset["GLCT"] == 5),
+                np.logical_or(msa_dataset["GLCT"] ==
+                              4, msa_dataset["GLCT"] == 5),
                 msa_dataset["GFORMAN"].isel(NFORMID=0) == 3,
             ),  # condition
             msa_dataset["non_urban_area"]
@@ -650,85 +651,18 @@ def compute_msa_lu(data_path, parameters):
 
     # Calculating Land Use MSA based on ResponseRelationships_GLOBIO4.xlsx
     msa_dataset["msa_lu"] = msa_dataset["share"] * msa_dataset["input_msa"]
-    msa_dataset["msa_lu_max"] = msa_dataset["share"] * xr.ones_like(msa_dataset["input_msa"])
-    #
-    # #output_dataset = xr.Dataset()
-    # msa_dataset["msa_lu_food_feed_crop_tmp"] = (
-    #     msa_dataset["msa_lu"]
-    #     .isel(land_use_type=[0, 1])
-    #     #.sum("land_use_type")
-    # )
-    # msa_dataset["msa_lu_food_feed_crop_tmp"] = 1.0 * msa_dataset["share"].isel(
-    #     land_use_type=[2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    #     )
-    # msa_dataset["msa_lu_food_feed_crop"] = msa_dataset["msa_lu_food_feed_crop_tmp"].sum("land_use_type")
-
-    msa_dataset["msa_lu_food_feed_crop"] = msa_dataset["msa_lu"].where(msa_dataset["msa_lu"].land_use_type.isin(["Food/feed cropland - Intense use", "Food/feed cropland - Minimal use"]), msa_dataset["msa_lu_max"]).sum("land_use_type")
-
-
-    # msa_dataset["msa_lu_pasture_tmp"] = (
-    #     msa_dataset["msa_lu"]
-    #     .isel(land_use_type=[2, 3])
-    #     #.sum("land_use_type")
-    # )
-    # msa_dataset["msa_lu_pasture_tmp"] = 1.0 * msa_dataset["share"].isel(
-    #     land_use_type=[0, 1, 4, 5, 6, 7, 8, 9, 10, 11]
-    # )
-    # msa_dataset["msa_lu_pasture"] = msa_dataset["msa_lu_pasture_tmp"].sum("land_use_type")
-
-    msa_dataset["msa_lu_pasture"] = msa_dataset["msa_lu"].where(msa_dataset["msa_lu"].land_use_type.isin(["Pasture - Intense use", "Pasture - Minimal use"]), msa_dataset["msa_lu_max"]).sum("land_use_type")
-
-
-    # msa_dataset["msa_lu_bioenergy_tmp"] = (
-    #     msa_dataset["msa_lu"]
-    #     .isel(land_use_type=[8, 9, 10])
-    #     #.sum("land_use_type")
-    # )
-    # msa_dataset["msa_lu_bioenergy_tmp"] = 1.0 * msa_dataset["msa_lu"].isel(
-    #     land_use_type=[0, 1, 2, 3, 4, 5, 6, 7, 11]
-    #     )
-    # msa_dataset["msa_lu_bioenergy"] = msa_dataset["msa_lu_bioenergy_tmp"].sum("land_use_type")
-
-    msa_dataset["msa_lu_bioenergy"] = msa_dataset["msa_lu"].where(msa_dataset["msa_lu"].land_use_type.isin(["Bioenergy cropland - Intense use", "Bioenergy cropland - Minimal use", "Bioenergy plantation"]), msa_dataset["msa_lu_max"]).sum("land_use_type")
-
-
-    # msa_dataset["msa_lu_carbon_plantation_tmp"] = (
-    #     msa_dataset["msa_lu"]
-    #     .isel(land_use_type=[11])
-    #     #.sum("land_use_type")
-    # )
-    # msa_dataset["msa_lu_carbon_plantation_tmp"] = 1.0 * msa_dataset["msa_lu"].isel(
-    #     land_use_type=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-    #     )
-    # msa_dataset["msa_lu_carbon_plantation"] = msa_dataset["msa_lu_carbon_plantation_tmp"].sum("land_use_type")
-
-    msa_dataset["msa_lu_carbon_plantation"] = msa_dataset["msa_lu"].where(msa_dataset["msa_lu"].land_use_type.isin(["Carbon plantation"]), msa_dataset["msa_lu_max"]).sum("land_use_type")
-
-
-    # msa_dataset["msa_lu_other_tmp"] = (
-    #     msa_dataset["msa_lu"]
-    #     .isel(land_use_type=[4, 5, 6, 7])  # Other plantation, Secondary vegetation, Urban, Natural land
-    #     #.sum("land_use_type")
-    # )
-    # msa_dataset["msa_lu_other_tmp"] = 1.0 * msa_dataset["msa_lu"].isel(
-    #     land_use_type=[0, 1, 2, 3, 8, 9, 10, 11]
-    #     )
-    # msa_dataset["msa_lu_other"] = msa_dataset["msa_lu_other_tmp"].sum("land_use_type")
-
-    msa_dataset["msa_lu_other"] = msa_dataset["msa_lu"].where(msa_dataset["msa_lu"].land_use_type.isin(["Other plantation", "Secondary vegetation", "Urban", "Natural land"]), msa_dataset["msa_lu_max"]).sum("land_use_type")
-
-
-
-    # msa_dataset["msa_lu_total"] = msa_dataset["msa_lu_food_feed_crop_tmp"].isel(land_use_type=[0, 1])
-    # + msa_dataset["msa_lu_pasture_tmp"].isel(land_use_type=[2, 3])
-    # + msa_dataset["msa_lu_bioenergy_tmp"].isel(land_use_type=[8, 9, 10]) 
-    # + msa_dataset["msa_lu_carbon_plantation_tmp"].isel(land_use_type=[11]) 
-    # + msa_dataset["msa_lu_other_tmp"].isel(land_use_type=[4, 5, 6, 7])
-    
-    # (
-    #     msa_dataset["msa_lu"]
-    #     .sum("land_use_type")
-    # )
+    msa_dataset["msa_lu_max"] = msa_dataset["share"] * \
+        xr.ones_like(msa_dataset["input_msa"])
+    msa_dataset["msa_lu_food_feed_crop"] = msa_dataset["msa_lu"].where(msa_dataset["msa_lu"].land_use_type.isin(
+        ["Food/feed cropland - Intense use", "Food/feed cropland - Minimal use"]), msa_dataset["msa_lu_max"]).sum("land_use_type")
+    msa_dataset["msa_lu_pasture"] = msa_dataset["msa_lu"].where(msa_dataset["msa_lu"].land_use_type.isin(
+        ["Pasture - Intense use", "Pasture - Minimal use"]), msa_dataset["msa_lu_max"]).sum("land_use_type")
+    msa_dataset["msa_lu_bioenergy"] = msa_dataset["msa_lu"].where(msa_dataset["msa_lu"].land_use_type.isin(
+        ["Bioenergy cropland - Intense use", "Bioenergy cropland - Minimal use", "Bioenergy plantation"]), msa_dataset["msa_lu_max"]).sum("land_use_type")
+    msa_dataset["msa_lu_carbon_plantation"] = msa_dataset["msa_lu"].where(
+        msa_dataset["msa_lu"].land_use_type.isin(["Carbon plantation"]), msa_dataset["msa_lu_max"]).sum("land_use_type")
+    msa_dataset["msa_lu_other"] = msa_dataset["msa_lu"].where(msa_dataset["msa_lu"].land_use_type.isin(
+        ["Other plantation", "Secondary vegetation", "Urban", "Natural land"]), msa_dataset["msa_lu_max"]).sum("land_use_type")
 
     msa_dataset["msa_lu_total"] = (
         msa_dataset["msa_lu_food_feed_crop"]
@@ -740,8 +674,9 @@ def compute_msa_lu(data_path, parameters):
     msa_dataset["msa_lu_sum"] = msa_dataset["msa_lu"].sum("land_use_type")
 
     # Saving Netcdf file
-    #output_dataset.to_netcdf(result_file)
-    msa_dataset[["msa_lu_sum", "msa_lu_food_feed_crop", "msa_lu_pasture", "msa_lu_bioenergy", "msa_lu_carbon_plantation", "msa_lu_other", "msa_lu_total"]].to_netcdf(result_file)
+    # output_dataset.to_netcdf(result_file)
+    msa_dataset[["msa_lu_sum", "msa_lu_food_feed_crop", "msa_lu_pasture", "msa_lu_bioenergy",
+                 "msa_lu_carbon_plantation", "msa_lu_other", "msa_lu_total"]].to_netcdf(result_file)
 
 
 def compute_msa_cc(data_path, parameters):
@@ -764,10 +699,12 @@ def compute_msa_cc(data_path, parameters):
         data_path.scenario_input, "..", "output", "climate_impacts"
     )
     if Path(os.path.join(path_to_temp, "TemperatureMAGICC.OUT")).is_file():
-        file_in = pym.read_mym(os.path.join(path_to_temp, "TemperatureMAGICC.OUT"))
+        file_in = pym.read_mym(os.path.join(
+            path_to_temp, "TemperatureMAGICC.OUT"))
         temperature_file = os.path.join(path_to_temp, "TemperatureMAGICC.OUT")
     elif Path(
-        os.path.join(path_to_temp, "..", "..", "I2RT/exchange", "TemperatureMAGICC.OUT")
+        os.path.join(path_to_temp, "..", "..",
+                     "I2RT/exchange", "TemperatureMAGICC.OUT")
     ).is_file():
         file_in = pym.read_mym(
             os.path.join(
@@ -781,7 +718,8 @@ def compute_msa_cc(data_path, parameters):
     #     file_in = pym.read_mym(os.path.join(path_to_temp, "TEMPERATURE.OUT"))
     #     temperature_file = os.path.join(path_to_temp, "TEMPERATURE.OUT")
     else:
-        raise Exception(f"There is no temperature file for {scen} at {data_path.input}")
+        raise Exception(
+            f"There is no temperature file for {scen} at {data_path.input}")
 
     with open("temperature_log.txt", "a") as f:
         f.write(
@@ -793,7 +731,7 @@ def compute_msa_cc(data_path, parameters):
         os.path.join(data_path.output, os.path.basename(temperature_file)),
     )
 
-    ######### Adjusting to make sure that GMTI is set to zero when CC is off (get_clfbopt(data_path) == 0)
+    # Adjusting to make sure that GMTI is set to zero when CC is off (get_clfbopt(data_path) == 0)
     if get_clfbopt(data_path) == 0:
         # file_in[0][:, 0] = file_in[0][:, 0] * 0.0
         file_in[0][:, 0] *= 0.0
@@ -876,14 +814,14 @@ def compute_msa_n(data_path, parameters):
 
     # saving msa into one variable for each land use type accounted for Nitrogen deposition:
     # Secondary Vegetation, Plantation, Natural Land
-    for i in [4, 5, 7, 11]: #  added 11 after changes in land use types
+    for i in [4, 5, 7, 11]:  # added 11 after changes in land use types
         msa_dataset["msa"][dict(land_use_type=i)] = msa_dataset[
             "GNDEP_to_msa"
         ] * msa_dataset["share"].isel(land_use_type=i)
 
     # As Nitrogen deposition does not influence msa in crop, pasture and urban
     # the share of these land_use_types is multiplied by msa = 1 (highest msa)
-    for i in [0, 1, 2, 3, 6, 8, 9, 10]: #  added 8, 9, 10 after changes in land use types
+    for i in [0, 1, 2, 3, 6, 8, 9, 10]:  # added 8, 9, 10 after changes in land use types
         msa_dataset["msa"][dict(land_use_type=i)] = 1.0 * msa_dataset["share"].isel(
             land_use_type=i
         )
@@ -897,7 +835,8 @@ def compute_msa_n(data_path, parameters):
         msa_n["Vertebrates"] = xr.ones_like(msa_n["Plants"])
 
     # Saving to file - two different arrays being saved as one dataset with species coordinate to identify them
-    msa_n.to_array(dim="specie", name="msa_n").to_dataset().to_netcdf(result_file)
+    msa_n.to_array(dim="specie", name="msa_n").to_dataset(
+    ).to_netcdf(result_file)
 
 
 def compute_pressure_impact(data_path, parameters):
@@ -917,19 +856,22 @@ def compute_pressure_impact(data_path, parameters):
 
     msa_dataset = load_dataset(file_list, data_path).fillna(0.0)
 
-    ######### Adjusting to make sure that the msa CC is 1 (which means zero CC impact on MSA) when CC is off (get_clfbopt(data_path) == 0)
+    # Adjusting to make sure that the msa CC is 1 (which means zero CC impact on MSA) when CC is off (get_clfbopt(data_path) == 0)
     if get_clfbopt(data_path) == 0:
         msa_dataset["msa_cc"] *= 0.0
         msa_dataset["msa_cc"] += 1.0
     #########
 
-    ### Eq (2) from GLOBIO4 paper
+    # Eq (2) from GLOBIO4 paper
+
+    ### Original GLOBIO equation ###
     # tmp_sum_msa = (
     #     (1.0 - msa_dataset["msa_cc"])
     #     + (1.0 - msa_dataset["msa_lu_total"])
     #     + (1.0 - msa_dataset["msa_n"])
     # )
 
+    ### Adjusted MSA tool equation to account for the decomposition of land use types ###
     tmp_sum_msa_lu = (
         (1.0 - msa_dataset["msa_lu_food_feed_crop"])
         + (1.0 - msa_dataset["msa_lu_pasture"])
@@ -943,7 +885,8 @@ def compute_pressure_impact(data_path, parameters):
     # Calculating Eq2 in different arrays and saving them to one dataset with pressure as coordinate (concat function)
     msa_dataset["P"] = xr.concat(
         [
-            (1.0 - msa_dataset[x]) * (1.0 - msa_dataset[msa_type]) / denominator
+            (1.0 - msa_dataset[x]) *
+            (1.0 - msa_dataset[msa_type]) / denominator
             for x, msa_type, denominator in [
                 ("msa_cc", "msa", tmp_sum_msa_lu),
                 ("msa_lu_food_feed_crop", "msa", tmp_sum_msa_lu),
@@ -951,7 +894,7 @@ def compute_pressure_impact(data_path, parameters):
                 ("msa_lu_bioenergy", "msa", tmp_sum_msa_lu),
                 ("msa_lu_carbon_plantation", "msa", tmp_sum_msa_lu),
                 ("msa_lu_other", "msa", tmp_sum_msa_lu),
-                ("msa_n","msa", tmp_sum_msa_lu),
+                ("msa_n", "msa", tmp_sum_msa_lu),
                 ("msa_lu_total", "msa", tmp_sum_msa_lu)
             ]
         ],
@@ -968,37 +911,6 @@ def compute_pressure_impact(data_path, parameters):
             "Land use"
         ]
     )
-
-    # # Calculating Eq2 in different arrays and saving them to one dataset with pressure as coordinate (concat function)
-    # msa_dataset["P"] = xr.concat(
-    #     [
-    #         (1.0 - msa_dataset[x]) * (1.0 - msa_dataset[msa_type]) / denominator
-    #         for x, msa_type, denominator in [
-    #             ("msa_cc", "msa", tmp_sum_msa),
-                                        #             ("msa_lu_food_feed_crop", "msa_lu_total", tmp_sum_msa_lu),
-                                        #             ("msa_lu_pasture", "msa_lu_total", tmp_sum_msa_lu),
-                                        #             ("msa_lu_bioenergy", "msa_lu_total", tmp_sum_msa_lu),
-                                        #             ("msa_lu_carbon_plantation", "msa_lu_total", tmp_sum_msa_lu),
-                                        #             ("msa_lu_other", "msa_lu_total", tmp_sum_msa_lu),
-    #             ("msa_n","msa", tmp_sum_msa),
-    #             ("msa_lu_total", "msa", tmp_sum_msa)
-    #         ]
-    #     ],
-    #     "pressure",
-    # ).assign_coords(
-    #     pressure=[
-    #         "Climate change",
-    #         "Land use - food/feed crop",
-    #         "Land use - pasture",
-    #         "Land use - bioenergy",
-    #         "Land use - carbon plantation",
-    #         "Land use - other",
-    #         "Nitrogen deposition",
-    #         "Land use"
-    #     ]
-    # )
-
-    # return msa_dataset["P"]
 
     return compute_regional_values(
         msa_dataset["P"].fillna(0.0), "pressure_impact", data_path
@@ -1025,13 +937,15 @@ def compute_overall_msa(data_path, parameters):
 
     msa_dataset = load_dataset(file_list, data_path).fillna(0.0)
 
-    ######### Adjusting to make sure that the msa CC is 1 (which means zero CC impact on MSA) when CC is off (get_clfbopt(data_path) == 0)
+    # Adjusting to make sure that the msa CC is 1 (which means zero CC impact on MSA) when CC is off (get_clfbopt(data_path) == 0)
     if get_clfbopt(data_path) == 0:
         msa_dataset["msa_cc"] *= 0.0
         msa_dataset["msa_cc"] += 1.0
     #########
 
     # Eq (1) from GLOBIO4 paper
+
+    ### Original GLOBIO equation ###
     # Calculating overall MSA at grid level
     # msa_dataset["msa"] = (
     #     msa_dataset["msa_cc"]
@@ -1039,7 +953,7 @@ def compute_overall_msa(data_path, parameters):
     #     * msa_dataset["msa_n"]
     # )
 
-    # Eq (1) from GLOBIO4 paper
+    ### Adjusted MSA tool equation to account for the decomposition of land use types ###
     msa_dataset["msa"] = (
         msa_dataset["msa_cc"]
         * msa_dataset["msa_lu_food_feed_crop"]
@@ -1220,7 +1134,8 @@ def compute_regional_values_helper(
     for specie in msa_region.specie.data:
         # Save as csv for species
         dataframe = (
-            msa_region.sel(specie=specie).drop("specie").to_dataframe().unstack("time")
+            msa_region.sel(specie=specie).drop(
+                "specie").to_dataframe().unstack("time")
         )
         dataframe.to_csv(
             f"{data_path.output}{output_prefix}_{file_prefix}_{specie.lower()}.csv",
@@ -1294,7 +1209,8 @@ def make_figures(data_path, parameters):
                     ax.xaxis.set_ticks(ds.region.data)
                     ax.tick_params(axis="x", labelrotation=90)
                     plt.tight_layout()
-                    fig.savefig(f"{data_path.output}{var}_pressure_and_msa_{title}.pdf")
+                    fig.savefig(
+                        f"{data_path.output}{var}_pressure_and_msa_{title}.pdf")
 
         plt.close("all")
 
@@ -1344,21 +1260,6 @@ def create_output_folder(data_path, parameters):
     os.makedirs(data_path.output, exist_ok=True)
 
 
-# def load_parameters(filename="parameters.ini"):
-#     config = configparser.ConfigParser()
-#     config.read(filename)
-#     return dict(
-#         input_path=config["MSA_TOOL"]["input_path"],
-#         list_of_scen=[
-#             scen.lstrip()
-#             for scen in config["MSA_TOOL"]["list_of_scen"][1:-1].split(",")
-#         ],
-#         years=[int(year) for year in config["MSA_TOOL"]["years"][1:-1].split(",")],
-#         make_figures=config.getboolean("MSA_TOOL", "make_figures"),
-#         force_compute_files=config.getboolean("MSA_TOOL", "force_compute_files"),
-#     )
-
-
 def need_to_compute(filename, parameters):
     if os.path.isfile(filename) and not parameters.force_compute_files:
         return False
@@ -1367,7 +1268,8 @@ def need_to_compute(filename, parameters):
 
 
 def get_clfbopt(data_path):
-    filename = os.path.join(data_path.scenario_input, "..", "dat", "options.dat")
+    filename = os.path.join(data_path.scenario_input,
+                            "..", "dat", "options.dat")
 
     if os.path.isfile(filename):
         with open(filename, "r") as f:
