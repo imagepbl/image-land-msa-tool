@@ -1,24 +1,9 @@
-===
-Pym
-===
+======
+MSA tool
+======
 
-Pym allows you to read MyM files into numpy arrays and write MyM files from
-numpy arrays and pandas DataFrames.
+Description
+Calculates MSA based on input data from IMAGE Framework
 
 Usage
-=====
-
-.. code:: python
-
-    import pym
-    pym.read_mym()
-
-Installation
-============
-For now, just include the ``pym`` package in your project folder 
-
-
-
-To Do
-=====
-
+Set up parameters.ini and the execute msa_tool.py
